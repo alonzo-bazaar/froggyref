@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+CC=gcc
+$CC -Wall -Wextra -Wpedantic -O2 -g3 -ggdb -o shsl shsl.c
