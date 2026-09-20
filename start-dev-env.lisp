@@ -1,6 +1,9 @@
+;; file that start development environment
+;; it loads all vendored dependencies (lisp and c)
+;; and starts the slynk server
+
 (require "asdf")
 (require "uiop")
-(defparameter *development-p* t)
 
 ;; utility path wrangling thing
 (defun from-cwd (&rest path)
@@ -16,8 +19,10 @@
                   '("alexandria/" "babel_0.5.0/" "trivial-features-1.0/" "cffi_0.24.1/"
                     "arrow-macros/" "cffi-object/"
                     "trivial-garbage-0.21/" "trivial-macroexpand-all/" "cffi-ops/"
-                    "global-vars/" "claw-raylib/")))
-  (format t "~A ~A~%" dep-dir asdf:*central-registry*)
+                    "global-vars/" "claw-raylib/"
+
+		    "slynk/"
+		    )))
   (pushnew dep-dir asdf:*central-registry* :test #'equal))
 
 ;; make foreign deps visible
@@ -30,13 +35,8 @@
 
 (asdf:load-system "claw-raylib")
 
-;; now that that's all done, load development deps as well
-(when *development-p*
-  (dolist (dep-dir (mapcar
-                    (lambda (dir) (namestring (from-cwd "thirdparty/" dir)))
-                    '("slynk/"))
-                   (pushnew dep-dir asdf:*central-registry* :test #'equal)))
-  (asdf:load-system "slynk")
-  ;; https://joaotavora.github.io/sly/#Setting-up-the-Lisp-image
-  (setf slynk:*use-dedicated-output-stream* nil)
-  (slynk:create-server :port 1234  :dont-close t))
+;; set up development server
+;; https://joaotavora.github.io/sly/#Setting-up-the-Lisp-image
+(asdf:load-system "slynk")
+(slynk:create-server :port 1234 :dont-close t)
+(setf slynk:*use-dedicated-output-stream* nil)

@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 LABEL autor="Sto Cazzo (tm)"
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt update -y && apt upgrade -y

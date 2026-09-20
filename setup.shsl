@@ -2,27 +2,29 @@
 ;; -*- mode:clojure -*-
 ;; vi: set ft=clojure:
 
-;; the code currently only builds the linux version of
-;; whatever the fuck it is I'm doing
-;; it's written to allow for windows and mac versions decently easily
-;; but I currently don't fucking know
+;; script to setup environment by
+;; - creating thirdparty/ lib
+;; - downloading third party c libraries (raylib) to it
+;; - downloading third party lisp libraries and transitive libraries to it
+;; - compiling some wrapper c code to make the above two talk to each other
 
-;; there is an additional linux/posix dependendency in the fact that the
-;; [ file?, mkdir, mv, rm, rm-f, rm-rf ]
-;; functions are currently implemented by forking out to coreutils
-;; coreutils may be installed on windows
-;; see: https://github.com/microsoft/coreutils
-;; (it's not even that hard, just `winget install Microsoft.Coreutils`)
+;; NOTE: the following functions: file?, mkdir, mv, rm, rm-f, rm-rf
+;; are currently implemented by forking out to coreutils
+;; these may be installed on windows: https://github.com/microsoft/coreutils
+;; by doing `winget install Microsoft.Coreutils`
 ;; but they're usually not there by default
-;; so this script may (will) break if they're absent
+;; this script may (will) break if they're absent
 
-;; other requirements are (for building)
+;; to download deps we also use
 ;; - git
 ;; - tar, gzip (for unpacking .tar.gz compressed tarballs)
 ;; - curl
+
+;; to compile the glue c code we use
 ;; - a c compiler, tested with gcc or clang
 ;;   I don't really know what could happen with msvc (cl.exe)
 
+;; here be (finally) the fucking code
 ;; config shit
 (def cc "gcc")
 (def log-cmds? true)
@@ -52,6 +54,12 @@
 
 (defn download [url target]
   (exec-or-die "curl" ["-L" url] ["-o" target]))
+
+
+;; ensure = download a dependency if it's not present
+;; dependency may be available online in various shapes and sizes and formats
+;; so we have different ensure-* functions to work with the various ways in
+;; which our deps may have been packaged on the interwebs
 (defn ensure-file [kw]
   (if-not (file? (:target kw)) (download (:url kw) (:target kw))))
 
@@ -70,18 +78,17 @@
                  "--branch" (or (:branch kw) "master")
                  (:target kw))))
 
-;; ensure thirdparty/ lib exists
+;; make sure the thirdparty/ directory exists
 (mkdir "thirdparty/")
 
 ;; download raylib to thirdparty/
-;; TODO: this `ensure-tarball' call is the main not-too-portable bit in here
 (ensure-tarball
  {:target   "./thirdparty/raylib-5.5_linux_amd64/"
   :tarball  "./thirdparty/raylib.tar.gz"
   :tb-dir   "./thirdparty/"
   :url (str "https://github.com/raysan5/raylib/releases/download/5.5/"
             "raylib-5.5_linux_amd64.tar.gz")})
-;; claw-raylib needs these two files as well for some reason
+;; claw-raylib needs these two files as well for some fucking reason
 (ensure-file ;; raymath.h
  {:target   "./thirdparty/raylib-5.5_linux_amd64/include/raymath.h"
   :url (str "https://raw.githubusercontent.com/raysan5/raylib/"
@@ -106,8 +113,7 @@
   :url    "https://github.com/bohonghuang/cffi-ops.git"
   :branch "master"})
 ;; global-vars is not listed as a dependency for claw-raylib in the README
-;; but it is present as a dependency in its asdf system definition 
-;; and it shits itself if this ain't present so... it's needed
+;; but it is present as a dependency in its asdf system
 (ensure-git
  {:target "./thirdparty/global-vars/"
   :url    "https://github.com/lmj/global-vars/"
@@ -136,7 +142,7 @@
   :url     (str "https://github.com/trivial-features/trivial-features/"
                 "archive/refs/tags/v1.0.tar.gz")})
 
-;; transitive deps
+;; transitive deps of the libraries above
 (ensure-git
  {:target "./thirdparty/arrow-macros/"
   :url    "https://github.com/hipeta/arrow-macros/"
@@ -151,17 +157,24 @@
   :url    "https://github.com/cbaggers/trivial-macroexpand-all"
   :branch "master"})
 
-;; (for deveopment only, not part of the final product)
-;; download slynk
+;; slynk (dependency for deveopment only, not part of the final product)
 ;; I'm doing it this way because sparse checkouts are a pain in the ass
-(if-not (file? "./thirdparty/slynk/")
+;; the setup is bit of a hack, should fix later
+;; basically slynk sees the directory it's in and looks for files in
+;; <there>/../contrib
+;; for the various sly-contrib libraries
+;; since we put slynk as a direct subdir of thirdparty, we must have sly contrib
+;; be in a contrib directory that's a sibling to slynk :|
+(if-not (and (file? "./thirdparty/slynk/")
+	     (file? "./thirdparty/contrib/"))
   (do
     (ensure-tarball
      {:target  "./thirdparty/sly-1.0.43/"
       :tarball "./thirdparty/sly.tar.gz"
       :tb-dir  "./thirdparty"
       :url  "https://github.com/joaotavora/sly/archive/refs/tags/1.0.43.tar.gz"})
-    (mv "./thirdparty/sly-1.0.43/slynk" "./thirdparty/slynk/")
+    (mv "./thirdparty/sly-1.0.43/slynk/" "./thirdparty/slynk/")
+    (mv "./thirdparty/sly-1.0.43/contrib/" "./thirdparty/contrib/")
     (rm-rf "./thirdparty/sly-1.0.43/")))
 
 ;; compile claw-raylib adapter libraries
@@ -170,10 +183,10 @@
 (defn compile-adapters [arch]
   (map
     (fn [adapted]
-      (let [bin
-            (str "./thirdparty/claw-raylib/lib/" "lib" adapted "-adapter.so")
-            src
-            (str "./thirdparty/claw-raylib/lib/" "lib" adapted "-adapter." arch ".c")]
+      (let [bin (str "./thirdparty/claw-raylib/lib/"
+		     "lib" adapted "-adapter.so")
+            src (str "./thirdparty/claw-raylib/lib/"
+                     "lib" adapted "-adapter." arch ".c")]
         (if-not (file? bin)
           (exec-or-die
             cc "-O3" "-fPIC" "-shared"

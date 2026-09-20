@@ -8,7 +8,7 @@
           :do (raylib:with-drawing
                 (raylib:update-camera camera #.(cffi:foreign-enum-value 'raylib:camera-mode :free))
                 (raylib:with-mode-3d camera
-                  (raylib:clear-background raylib:+raywhite+)
-                  (raylib:draw-grid 100 1.0)
+                  (raylib:clear-background raylib:+red+)
+                  (raylib:draw-grid 100 0.5)
                   (rlgl:disable-backface-culling)
-                  (rlgl:enable-backface-culling))))))
+                  (rlgl:enable-backface-culling))))))e
