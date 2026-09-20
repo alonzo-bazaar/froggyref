@@ -1,0 +1,187 @@
+#!./tools/shsl
+;; -*- mode:clojure -*-
+;; vi: set ft=clojure:
+
+;; the code currently only builds the linux version of
+;; whatever the fuck it is I'm doing
+;; it's written to allow for windows and mac versions decently easily
+;; but I currently don't fucking know
+
+;; there is an additional linux/posix dependendency in the fact that the
+;; [ file?, mkdir, mv, rm, rm-f, rm-rf ]
+;; functions are currently implemented by forking out to coreutils
+;; coreutils may be installed on windows
+;; see: https://github.com/microsoft/coreutils
+;; (it's not even that hard, just `winget install Microsoft.Coreutils`)
+;; but they're usually not there by default
+;; so this script may (will) break if they're absent
+
+;; other requirements are (for building)
+;; - git
+;; - tar, gzip (for unpacking .tar.gz compressed tarballs)
+;; - curl
+;; - a c compiler, tested with gcc or clang
+;;   I don't really know what could happen with msvc (cl.exe)
+
+;; config shit
+(def cc "gcc")
+(def log-cmds? true)
+
+;; utils (that I should add to shsl's stdlib already)
+(defmacro if-not [a b & c]
+  (if-code (not-code a)
+           b
+           (if (= c []) nil (get c 0))))
+(defn file? [file]
+  (= 0 (:exit-code (exec-strs "ls" file))))
+(defn die [& msg]
+  (map print (if (= [] msg) ["fuck"] msg)) (println "")
+  (exit 1))
+(defn exec-or-die [& cmd]
+  ;; first of all a "normalization step"
+  ;; just so we can add square brackets to visually group command line args
+  (let [cmd (reduce vec-cat (map (fn [x] (if (vec? x) x [x])) cmd))]
+    (if log-cmds? (println "running command: " cmd))
+    (or (exec-vec cmd) (die))))
+
+(defn mkdir [a]    (if-not (file? a) (exec-or-die "mkdir" "-p" a)))
+(defn mv    [a b]  (if     (file? a) (exec-or-die "mv" a b)))
+(defn rm    [a]    (if     (file? a) (exec-or-die "rm" a)))
+(defn rm-f  [a]    (if     (file? a) (exec-or-die "rm" "-f" a)))
+(defn rm-rf [a]    (if     (file? a) (exec-or-die "rm" "-rf" a)))
+
+(defn download [url target]
+  (exec-or-die "curl" ["-L" url] ["-o" target]))
+(defn ensure-file [kw]
+  (if-not (file? (:target kw)) (download (:url kw) (:target kw))))
+
+(defn ensure-tarball [kw]
+  (ensure-file {:target (:tarball kw)
+                :url (:url kw)})
+  (if-not (file? (:target kw))
+    (exec-or-die "tar"
+                 "-xzf" (:tarball kw)
+                 "-C" (or (:tb-dir kw) "thirdparty/"))))
+
+(defn ensure-git [kw]
+  (if-not (file? (:target kw))
+    (exec-or-die "git" "clone" (:url kw)
+                 "--depth" "1"
+                 "--branch" (or (:branch kw) "master")
+                 (:target kw))))
+
+;; ensure thirdparty/ lib exists
+(mkdir "thirdparty/")
+
+;; download raylib to thirdparty/
+;; TODO: this `ensure-tarball' call is the main not-too-portable bit in here
+(ensure-tarball
+ {:target   "./thirdparty/raylib-5.5_linux_amd64/"
+  :tarball  "./thirdparty/raylib.tar.gz"
+  :tb-dir   "./thirdparty/"
+  :url (str "https://github.com/raysan5/raylib/releases/download/5.5/"
+            "raylib-5.5_linux_amd64.tar.gz")})
+;; claw-raylib needs these two files as well for some reason
+(ensure-file ;; raymath.h
+ {:target   "./thirdparty/raylib-5.5_linux_amd64/include/raymath.h"
+  :url (str "https://raw.githubusercontent.com/raysan5/raylib/"
+            "refs/tags/5.5/src/raymath.h")})
+(ensure-file ;; rcamera.h
+ {:target   "./thirdparty/raylib-5.5_linux_amd64/include/rcamera.h"
+  :url (str "https://raw.githubusercontent.com/raysan5/raylib/"
+            "refs/tags/5.5/src/rcamera.h")})
+
+;; download claw-raylib to thirdparty/
+(ensure-git
+ {:target "./thirdparty/claw-raylib/"
+  :url    "https://github.com/bohonghuang/claw-raylib.git"
+  :branch "prebuild-5.5"})
+;; and its dependencies
+(ensure-git
+ {:target "./thirdparty/cffi-object/"
+  :url    "https://github.com/bohonghuang/cffi-object.git"
+  :branch "master"})
+(ensure-git
+ {:target "./thirdparty/cffi-ops/"
+  :url    "https://github.com/bohonghuang/cffi-ops.git"
+  :branch "master"})
+;; global-vars is not listed as a dependency for claw-raylib in the README
+;; but it is present as a dependency in its asdf system definition 
+;; and it shits itself if this ain't present so... it's needed
+(ensure-git
+ {:target "./thirdparty/global-vars/"
+  :url    "https://github.com/lmj/global-vars/"
+  :branch "master"})
+
+;; download cffi to thirdparty/
+(ensure-tarball
+ {:target  "./thirdparty/cffi_0.24.1/"
+  :tarball "./thirdparty/cffi.tar.gz"
+  :tb-dir  "./thirdparty/"
+  :url     "https://cffi.common-lisp.dev/releases/cffi_0.24.1.tar.gz"})
+;; and its dependencies
+(ensure-tarball
+ {:target  "./thirdparty/babel_0.5.0/"
+  :tarball "./thirdparty/babel.tar.gz"
+  :tb-dir  "./thirdparty/"
+  :url     "https://babel.common-lisp.dev/releases/babel_0.5.0.tar.gz"})
+(ensure-git
+ {:target  "./thirdparty/alexandria/"
+  :branch  "v1.4"
+  :url     "https://gitlab.common-lisp.net/alexandria/alexandria.git"})
+(ensure-tarball
+ {:target  "./thirdparty/trivial-features-1.0/"
+  :tarball "./thirdparty/trivial-features.tar.gz"
+  :tb-dir  "./thirdparty/"
+  :url     (str "https://github.com/trivial-features/trivial-features/"
+                "archive/refs/tags/v1.0.tar.gz")})
+
+;; transitive deps
+(ensure-git
+ {:target "./thirdparty/arrow-macros/"
+  :url    "https://github.com/hipeta/arrow-macros/"
+  :branch "master"})
+(ensure-tarball
+ {:target  "./thirdparty/trivial-garbage-0.21/"
+  :tarball "./thirdparty/trivial-garbage.tar.gz"
+  :tb-dir  "./thirdparty/"
+  :url     "https://github.com/trivial-garbage/trivial-garbage/archive/refs/tags/v0.21.tar.gz"})
+(ensure-git
+ {:target "./thirdparty/trivial-macroexpand-all/"
+  :url    "https://github.com/cbaggers/trivial-macroexpand-all"
+  :branch "master"})
+
+;; (for deveopment only, not part of the final product)
+;; download slynk
+;; I'm doing it this way because sparse checkouts are a pain in the ass
+(if-not (file? "./thirdparty/slynk/")
+  (do
+    (ensure-tarball
+     {:target  "./thirdparty/sly-1.0.43/"
+      :tarball "./thirdparty/sly.tar.gz"
+      :tb-dir  "./thirdparty"
+      :url  "https://github.com/joaotavora/sly/archive/refs/tags/1.0.43.tar.gz"})
+    (mv "./thirdparty/sly-1.0.43/slynk" "./thirdparty/slynk/")
+    (rm-rf "./thirdparty/sly-1.0.43/")))
+
+;; compile claw-raylib adapter libraries
+;; adapted from claw-raylib repo README
+;; (I don't care about raygui atm)
+(defn compile-adapters [arch]
+  (map
+    (fn [adapted]
+      (let [bin
+            (str "./thirdparty/claw-raylib/lib/" "lib" adapted "-adapter.so")
+            src
+            (str "./thirdparty/claw-raylib/lib/" "lib" adapted "-adapter." arch ".c")]
+        (if-not (file? bin)
+          (exec-or-die
+            cc "-O3" "-fPIC" "-shared"
+            (str "-I./thirdparty/raylib-5.5_linux_amd64/include/")
+            (str "-L./thirdparty/raylib-5.5_linux_amd64/lib/")
+            "-lraylib"
+            src
+            "-o" bin))))
+      ["raylib" "rlgl"]))
+
+(compile-adapters "x86_64-pc-linux-gnu")

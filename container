@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+IMAGE_NAME='lisp-rl-dev'
+CONTAINER_NAME='feel-so-clean-like-a-dev-machine'
+
+export X11SOCKET_FOLDER=/tmp/.X11-unix
+
+build() {
+    docker image build . -t "${IMAGE_NAME}"
+}
+
+# https://github.com/hemashushu/docker-archlinux-gui#mapping-x11
+# https://github.com/Karscist/penultttimate/
+run() {
+    # Create XAuthority file for the container
+    export X11AUTHORITY_FILE=/tmp/.docker.xauth
+    touch "${X11AUTHORITY_FILE}"
+
+    DISPLAY_CANONICAL="$(echo "${DISPLAY}" | sed s/localhost//)"
+
+    if [[ "${DISPLAY_CANONICAL}" != "${DISPLAY}" ]]
+    then
+        export DISPLAY="${DISPLAY_CANONICAL}"
+    fi
+
+    # Allow any host to connect to this X server
+    xauth nlist "${DISPLAY}" | sed -e 's/^..../ffff/' | uniq | xauth -f "${X11AUTHORITY_FILE}" nmerge -
+
+    docker run\
+           -it \
+           --rm \
+           -e "XAUTHORITY=${X11AUTHORITY_FILE}" \
+           -e "DISPLAY=${DISPLAY}" \
+           --device '/dev/dri' \
+           --device '/dev/snd' \
+           --network host \
+           --cap-add=NET_RAW \
+           --mount "type=bind,source=${X11SOCKET_FOLDER},target=${X11SOCKET_FOLDER}" \
+           --mount "type=bind,source=${X11AUTHORITY_FILE},target=${X11AUTHORITY_FILE}" \
+           --mount type=bind,src=.,dst=/root/workspace/ \
+           --name "${CONTAINER_NAME}" \
+           "${IMAGE_NAME}" \
+           bash
+}
+
+main() {
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in 
+            'build') echo "building..." && build ;;
+            'run') echo "running..." && run ;;
+            *) echo "unrecognized command $arg, skipping..." ;;
+        esac
+    done
+}
+
+if ( return 0 2>/dev/null ); then # being sourced
+    true
+else # being run
+    main "$@"
+fi
